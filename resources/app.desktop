@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Bitrate
+Comment=A Bandwidth Monitor applet for COSMIC Desktop.
+Type=Application
+Icon=com.github.Aviral-Omar.bitrate
+Exec=bitrate %F
+Terminal=false
+StartupNotify=true
+Categories=COSMIC
+Keywords=COSMIC
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicHoverPopup=Auto
+MimeType=
