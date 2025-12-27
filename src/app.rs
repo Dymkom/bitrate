@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-// TODO: Spacing for different panel sizes
 // TODO: Code cleanup
+// TODO: Check default interface dbus config
 use {
     crate::{
         config::{BitrateAppletConfig, Unit},
@@ -8,19 +8,24 @@ use {
     },
     cosmic::{
         self, Element,
-        applet::padded_control,
+        applet::{Size, cosmic_panel_config::PanelSize, padded_control},
+        config::{CosmicTk, FontConfig},
         cosmic_config::{self, Config, CosmicConfigEntry},
         cosmic_theme::Spacing,
         iced::{
             self, Alignment, Length, Limits, Rectangle, Subscription,
+            advanced::graphics::text::cosmic_text::{self, Buffer, FontSystem, Metrics, Shaping},
             widget::{column, row},
             window,
         },
         iced_widget::Row,
-        iced_winit::commands::popup::{destroy_popup, get_popup},
+        iced_winit::{
+            commands::popup::{destroy_popup, get_popup},
+            graphics::text::cosmic_text::Attrs,
+        },
         theme,
         widget::{
-            self, autosize, button, container, icon,
+            self, autosize, button, container,
             rectangle_tracker::{
                 RectangleTracker, RectangleUpdate, rectangle_tracker_subscription,
             },
@@ -50,8 +55,12 @@ pub struct AppModel {
     sent_bytes: u64,
     /// Download speed
     download_speed: u64,
+    download_speed_display: String,
+    download_unit: String,
     /// Upload speed
     upload_speed: u64,
+    upload_speed_display: String,
+    upload_unit: String,
     /// Unit model
     unit_model: segmented_button::SingleSelectModel,
     /// Bits Entity
@@ -60,6 +69,10 @@ pub struct AppModel {
     bytes_entity: segmented_button::Entity,
     rectangle_tracker: Option<RectangleTracker<u32>>,
     rectangle: Rectangle,
+    font_system: FontSystem,
+    unit_width: f32,
+    data_width: f32,
+    line_height: f32,
 }
 
 /// Messages emitted by the application and its widgets.
@@ -75,16 +88,17 @@ pub enum Message {
     ShowDownloadSpeedChanged(bool),
     ShowUploadSpeedChanged(bool),
     Rectangle(RectangleUpdate<u32>),
+    ThemeChanged(cosmic::config::CosmicTk),
 }
 
 impl AppModel {
     fn format_speed(&self, val: f64) -> String {
-        let formatted = if val >= 100.0 {
-            format!("{:.1}", val) // e.g., 125.4
-        } else if val >= 10.0 {
-            format!("{:.2}", val) // e.g., 45.12
+        let formatted = if val >= 1000.0 {
+            format!("{:.0}", val)
+        } else if val >= 100.0 {
+            format!("{:.1}", val)
         } else {
-            format!("{:.2}", val) // e.g., 9.42
+            format!("{:.2}", val)
         };
 
         // Clean up trailing zeros
@@ -97,76 +111,202 @@ impl AppModel {
         result.chars().take(5).collect()
     }
 
-    fn horizontal_layout(
-        &self,
-        download_speed: &str,
-        download_unit: &str,
-        upload_speed: &str,
-        upload_unit: &str,
-    ) -> Element<'_, Message> {
+    fn get_panel_size(&self) -> u32 {
+        match &self.core.applet.size {
+            Size::Hardcoded(_) => 16,
+            Size::PanelSize(panel_size) => match panel_size {
+                PanelSize::XS => 16,
+                PanelSize::S => 20,
+                PanelSize::M => 28,
+                PanelSize::L => 32,
+                PanelSize::XL => 48,
+                PanelSize::Custom(s) => (*s).max(16) / 2,
+            },
+        }
+    }
+
+    fn get_text_width_and_height(&mut self, text: &str, font_config: &FontConfig) -> (f32, f32) {
+        let panel_size = self.get_panel_size();
+        let font_size = if panel_size <= 20 {
+            14.0
+        } else if panel_size <= 28 {
+            20.0
+        } else if panel_size <= 32 {
+            24.0
+        } else {
+            29.0
+        };
+        let font = iced::Font::from(font_config.clone());
+        let family = match font.family {
+            iced::font::Family::Monospace => cosmic_text::Family::Monospace,
+            iced::font::Family::Serif => cosmic_text::Family::Serif,
+            iced::font::Family::SansSerif => cosmic_text::Family::SansSerif,
+            iced::font::Family::Name(name) => cosmic_text::Family::Name(name),
+            iced::font::Family::Cursive => cosmic_text::Family::Cursive,
+            iced::font::Family::Fantasy => cosmic_text::Family::Fantasy,
+        };
+        let weight = match font.weight {
+            iced::font::Weight::Thin => cosmic_text::Weight::THIN,
+            iced::font::Weight::ExtraLight => cosmic_text::Weight::EXTRA_LIGHT,
+            iced::font::Weight::Light => cosmic_text::Weight::LIGHT,
+            iced::font::Weight::Normal => cosmic_text::Weight::NORMAL,
+            iced::font::Weight::Medium => cosmic_text::Weight::MEDIUM,
+            iced::font::Weight::Bold => cosmic_text::Weight::BOLD,
+            iced::font::Weight::ExtraBold => cosmic_text::Weight::EXTRA_BOLD,
+            iced::font::Weight::Black => cosmic_text::Weight::BLACK,
+            iced::font::Weight::Semibold => cosmic_text::Weight::SEMIBOLD,
+        };
+
+        let style = match font.style {
+            iced::font::Style::Normal => cosmic_text::Style::Normal,
+            iced::font::Style::Italic => cosmic_text::Style::Italic,
+            iced::font::Style::Oblique => cosmic_text::Style::Oblique,
+        };
+        let attrs = Attrs::new().family(family).weight(weight).style(style);
+
+        let metrics = Metrics::new(font_size.into(), font_size.into());
+        // Create a buffer to shape the text
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, None);
+
+        // Get the width of the first layout line
+        let layout_line = buffer
+            .lines
+            .first()
+            .unwrap()
+            .layout_opt()
+            .unwrap()
+            .first()
+            .unwrap();
+        (
+            layout_line.w.ceil(),
+            (layout_line.max_ascent + layout_line.max_descent).ceil(),
+        )
+    }
+
+    fn set_download_speed_display(&mut self) {
+        let download_power = if self.download_speed > 0 {
+            self.download_speed.ilog2()
+        } else {
+            0
+        };
+        let download_speed_rebase =
+            self.download_speed as f64 / 2u64.pow(download_power - download_power % 10) as f64;
+        let download_speed_display = if download_power >= 10 {
+            self.format_speed(download_speed_rebase)
+        } else {
+            format!("{:.0}", download_speed_rebase)
+        };
+        let mut download_unit = String::new();
+        if download_power >= 20 {
+            download_unit.push('M');
+        } else if download_power >= 10 {
+            download_unit.push('K');
+        }
+        match self.config.unit {
+            Unit::Bits => {
+                download_unit.push_str("b/s");
+            }
+            Unit::Bytes => {
+                download_unit.push_str("B/s");
+            }
+        }
+        download_unit.push_str("  ↓");
+        self.download_speed_display = download_speed_display;
+        self.download_unit = download_unit;
+    }
+
+    fn set_upload_speed_display(&mut self) {
+        let upload_power = if self.upload_speed > 0 {
+            self.upload_speed.ilog2()
+        } else {
+            0
+        };
+        let upload_speed_rebase =
+            self.upload_speed as f64 / 2u64.pow(upload_power - upload_power % 10) as f64;
+        let upload_speed_display = if upload_power >= 10 {
+            self.format_speed(upload_speed_rebase)
+        } else {
+            format!("{:.0}", upload_speed_rebase)
+        };
+        let mut upload_unit = String::new();
+        if upload_power >= 20 {
+            upload_unit.push('M');
+        } else if upload_power >= 10 {
+            upload_unit.push('K');
+        }
+        match self.config.unit {
+            Unit::Bits => {
+                upload_unit.push_str("b/s");
+            }
+            Unit::Bytes => {
+                upload_unit.push_str("B/s");
+            }
+        }
+        upload_unit.push_str("  ↑");
+        self.upload_speed_display = upload_speed_display;
+        self.upload_unit = upload_unit;
+    }
+
+    fn horizontal_layout(&self) -> Element<'_, Message> {
         let theme = cosmic::theme::active();
         let cosmic = theme.cosmic();
-
-        let download_wrapper: Element<Message> = container(
-            row!(
-                container(self.core.applet.text(download_speed.to_string()))
-                    .align_right(Length::FillPortion(3)),
-                container(
-                    row!(
-                        self.core.applet.text(download_unit.to_string()),
-                        icon::from_name("go-down-symbolic").icon(),
-                    )
-                    .spacing(cosmic.space_xxs())
-                    .align_y(Alignment::Center)
-                )
-                .align_right(Length::FillPortion(4)),
-            )
-            .spacing(cosmic.space_xxs())
-            .align_y(Alignment::Center),
-        )
-        .align_right(Length::Fill)
-        .into();
-        let upload_wrapper: Element<Message> = container(
-            row!(
-                container(self.core.applet.text(upload_speed.to_string()))
-                    .align_right(Length::FillPortion(3)),
-                container(
-                    row!(
-                        self.core.applet.text(upload_unit.to_string()),
-                        icon::from_name("go-up-symbolic").icon(),
-                    )
-                    .spacing(cosmic.space_xxs())
-                    .align_y(Alignment::Center)
-                )
-                .align_right(Length::FillPortion(4)),
-            )
-            .spacing(cosmic.space_xxs())
-            .align_y(Alignment::Center),
-        )
-        .align_right(Length::Fill)
-        .into();
         let mut elements: Vec<Element<Message>> = Vec::new();
+        let mut widget_width = 0.0;
+        let row_width = self.data_width + cosmic.space_none() as f32 + self.unit_width;
+
         if self.config.show_download_speed {
-            elements.push(download_wrapper);
+            elements.push(
+                container(
+                    row!(
+                        container(self.core.applet.text(&self.download_speed_display))
+                            .align_left(self.data_width),
+                        container(self.core.applet.text(&self.download_unit))
+                            .align_right(self.unit_width),
+                    )
+                    .spacing(cosmic.space_none())
+                    .clip(true),
+                )
+                .width(row_width)
+                .height(self.line_height)
+                .into(),
+            );
+            widget_width += row_width;
         }
         if self.config.show_upload_speed {
-            elements.push(upload_wrapper);
+            if self.config.show_download_speed {
+                widget_width += cosmic.space_xs() as f32;
+            }
+            elements.push(
+                container(
+                    row!(
+                        container(self.core.applet.text(&self.upload_speed_display))
+                            .align_left(self.data_width),
+                        container(self.core.applet.text(&self.upload_unit))
+                            .align_right(self.unit_width),
+                    )
+                    .spacing(cosmic.space_none())
+                    .clip(true),
+                )
+                .width(row_width)
+                .height(self.line_height)
+                .into(),
+            );
+            widget_width += row_width;
         }
-        let widget_width;
-        if self.config.show_download_speed && self.config.show_upload_speed {
-            widget_width = Length::Fixed((self.core.applet.suggested_size(true).0 * 12) as f32);
-        } else {
-            widget_width = Length::Fixed((self.core.applet.suggested_size(true).0 * 6) as f32);
-        }
-        Row::from_vec(elements)
-            .height(Length::Fixed(
-                (self.core.applet.suggested_size(true).1
-                    + 2 * self.core.applet.suggested_padding(true).1) as f32,
-            ))
-            .width(widget_width)
-            .spacing(cosmic.space_xxs())
-            .align_y(Alignment::Center)
-            .into()
+
+        let padding = self.core.applet.suggested_padding(true);
+        widget_width += 2.0 * padding.0 as f32;
+        container(
+            Row::from_vec(elements)
+                .spacing(cosmic.space_xs())
+                .clip(true),
+        )
+        .align_y(Alignment::Center)
+        .padding([padding.1, padding.0])
+        .height(self.line_height + 2.0 * padding.1 as f32)
+        .width(widget_width)
+        .into()
     }
 }
 
@@ -234,7 +374,7 @@ impl cosmic::Application for AppModel {
         });
 
         // Construct the app model with the runtime's core.
-        let app = AppModel {
+        let mut app = AppModel {
             core,
             config_helper,
             config,
@@ -242,15 +382,35 @@ impl cosmic::Application for AppModel {
             received_bytes,
             sent_bytes,
             download_speed: 0,
+            download_speed_display: "".to_string(),
+            download_unit: "".to_string(),
             upload_speed: 0,
+            upload_speed_display: "".to_string(),
+            upload_unit: "".to_string(),
             default_network_interface: network::get_default_network_interface(),
             unit_model,
             bits_entity,
             bytes_entity,
             rectangle: Rectangle::default(),
             rectangle_tracker: None,
+            font_system: FontSystem::new(),
+            unit_width: 0.0,
+            data_width: 0.0,
+            line_height: 0.0,
         };
-
+        app.set_download_speed_display();
+        app.set_upload_speed_display();
+        let interface_font = match CosmicTk::get_entry(
+            &Config::new("com.system76.CosmicTk", CosmicTk::VERSION).unwrap(),
+        ) {
+            Ok(cosmic_tk) => cosmic_tk.interface_font,
+            Err((_, cosmic_tk)) => cosmic_tk.interface_font,
+        };
+        app.data_width = app.get_text_width_and_height("00.00", &interface_font).0;
+        app.unit_width = app.get_text_width_and_height("Mb/s  ↓", &interface_font).0;
+        app.line_height = app
+            .get_text_width_and_height("1234567890.KM/Bb↓↑", &interface_font)
+            .1;
         (app, cosmic::Task::none())
     }
 
@@ -265,50 +425,13 @@ impl cosmic::Application for AppModel {
     /// be drawn using the `view_window` method.
     fn view(&self) -> Element<'_, Self::Message> {
         let is_horizontal = self.core.applet.is_horizontal();
-        let download_power = if self.download_speed > 0 {
-            self.download_speed.ilog2()
-        } else {
-            0
-        };
-        let upload_power = if self.upload_speed > 0 {
-            self.upload_speed.ilog2()
-        } else {
-            0
-        };
-        let download_speed_rebase =
-            self.download_speed as f64 / 2u64.pow(download_power - download_power % 10) as f64;
-        let download_speed_display = if download_power >= 10 {
-            self.format_speed(download_speed_rebase)
-        } else {
-            format!("{:.0}", download_speed_rebase)
-        };
-        let upload_speed_rebase =
-            self.upload_speed as f64 / 2u64.pow(upload_power - upload_power % 10) as f64;
-        let upload_speed_display = if upload_power >= 10 {
-            self.format_speed(upload_speed_rebase)
-        } else {
-            format!("{:.0}", upload_speed_rebase)
-        };
-        let mut download_unit = String::new();
-        if download_power >= 20 {
-            download_unit.push('M');
-        } else if download_power >= 10 {
-            download_unit.push('K');
-        }
-        let mut upload_unit = String::new();
-        if upload_power >= 20 {
-            upload_unit.push('M');
-        } else if upload_power >= 10 {
-            upload_unit.push('K');
-        }
-        match self.config.unit {
-            Unit::Bits => {
-                download_unit.push_str("b/s");
-                upload_unit.push_str("b/s");
+        let mut limits = Limits::NONE.min_width(1.).min_height(1.);
+        if let Some(b) = self.core.applet.suggested_bounds {
+            if b.width > 0.0 {
+                limits = limits.max_width(b.width);
             }
-            Unit::Bytes => {
-                download_unit.push_str("B/s");
-                upload_unit.push_str("B/s");
+            if b.height > 0.0 {
+                limits = limits.max_height(b.height);
             }
         }
 
@@ -322,15 +445,10 @@ impl cosmic::Application for AppModel {
                 .into();
         }
 
-        let button = button::custom(self.horizontal_layout(
-            &download_speed_display,
-            &download_unit,
-            &upload_speed_display,
-            &upload_unit,
-        ))
-        .padding([0, self.core.applet.suggested_padding(true).0])
-        .on_press_down(Message::TogglePopup)
-        .class(cosmic::theme::Button::AppletIcon);
+        let button = button::custom(self.horizontal_layout())
+            .padding(0)
+            .on_press_down(Message::TogglePopup)
+            .class(cosmic::theme::Button::AppletIcon);
         autosize::autosize(
             if let Some(tracker) = self.rectangle_tracker.as_ref() {
                 Element::from(tracker.container(0, button).ignore_bounds(true))
@@ -339,6 +457,7 @@ impl cosmic::Application for AppModel {
             },
             AUTOSIZE_MAIN_ID.clone(),
         )
+        .limits(limits)
         .into()
     }
 
@@ -416,6 +535,9 @@ impl cosmic::Application for AppModel {
 
                     Message::UpdateConfig(update.config)
                 }),
+            self.core
+                .watch_config("com.system76.CosmicTk")
+                .map(|u| Message::ThemeChanged(u.config)),
         ])
     }
 
@@ -427,8 +549,9 @@ impl cosmic::Application for AppModel {
     fn update(&mut self, message: Self::Message) -> cosmic::Task<cosmic::Action<Self::Message>> {
         match message {
             Message::UpdateBandwidth => {
-                if let Some(network_interface) = &self.default_network_interface {
-                    if let Some(received_bytes_cur) = network::get_received_bytes(network_interface)
+                if let Some(network_interface) = self.default_network_interface.clone() {
+                    if let Some(received_bytes_cur) =
+                        network::get_received_bytes(network_interface.as_ref())
                     {
                         self.download_speed = received_bytes_cur - self.received_bytes;
                         if self.config.unit == Unit::Bits {
@@ -436,14 +559,18 @@ impl cosmic::Application for AppModel {
                         }
                         self.download_speed /= self.config.update_rate as u64;
                         self.received_bytes = received_bytes_cur;
+                        self.set_download_speed_display();
                     }
-                    if let Some(sent_bytes_cur) = network::get_sent_bytes(network_interface) {
+                    if let Some(sent_bytes_cur) =
+                        network::get_sent_bytes(network_interface.as_ref())
+                    {
                         self.upload_speed = sent_bytes_cur - self.sent_bytes;
                         if self.config.unit == Unit::Bits {
                             self.upload_speed *= 8;
                         }
                         self.upload_speed /= self.config.update_rate as u64;
                         self.sent_bytes = sent_bytes_cur;
+                        self.set_upload_speed_display();
                     }
                 }
             }
@@ -514,6 +641,17 @@ impl cosmic::Application for AppModel {
                         .max_height(1080.0);
                     get_popup(popup_settings)
                 };
+            }
+            Message::ThemeChanged(theme) => {
+                self.data_width = self
+                    .get_text_width_and_height("00.00", &theme.interface_font)
+                    .0;
+                self.unit_width = self
+                    .get_text_width_and_height("Mb/s  ↓", &theme.interface_font)
+                    .0;
+                self.line_height = self
+                    .get_text_width_and_height("1234567890.KM/Bb↓↑", &theme.interface_font)
+                    .1;
             }
             Message::PopupClosed(id) => {
                 if self.popup.as_ref() == Some(&id) {
