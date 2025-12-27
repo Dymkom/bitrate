@@ -13,7 +13,7 @@ use {
         cosmic_config::{self, Config, CosmicConfigEntry},
         cosmic_theme::Spacing,
         iced::{
-            self, Alignment, Length, Limits, Rectangle, Subscription,
+            self, Alignment, Limits, Rectangle, Subscription,
             advanced::graphics::text::cosmic_text::{self, Buffer, FontSystem, Metrics, Shaping},
             widget::{column, row},
             window,
@@ -435,25 +435,27 @@ impl cosmic::Application for AppModel {
             }
         }
 
-        if !is_horizontal || !(self.config.show_download_speed || self.config.show_upload_speed) {
-            return self
+        let button: Element<'_, Self::Message>;
+        if is_horizontal && (self.config.show_download_speed || self.config.show_upload_speed) {
+            button = button::custom(self.horizontal_layout())
+                .padding(0)
+                .on_press_down(Message::TogglePopup)
+                .class(cosmic::theme::Button::AppletIcon)
+                .into();
+        } else {
+            button = self
                 .core
                 .applet
                 .icon_button(Self::APP_ID)
                 .on_press_down(Message::TogglePopup)
-                .width(Length::Shrink)
                 .into();
         }
 
-        let button = button::custom(self.horizontal_layout())
-            .padding(0)
-            .on_press_down(Message::TogglePopup)
-            .class(cosmic::theme::Button::AppletIcon);
         autosize::autosize(
             if let Some(tracker) = self.rectangle_tracker.as_ref() {
                 Element::from(tracker.container(0, button).ignore_bounds(true))
             } else {
-                button.into()
+                button
             },
             AUTOSIZE_MAIN_ID.clone(),
         )
