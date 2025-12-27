@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // TODO: Code cleanup
 // TODO: Check default interface dbus config
+// TODO: Icon tooltip
+// TODO: Bring view close to other applets
 use {
     crate::{
         config::{BitrateAppletConfig, Unit},
@@ -506,7 +508,6 @@ impl cosmic::Application for AppModel {
                 toggler(self.config.show_upload_speed).on_toggle(Message::ShowUploadSpeedChanged)
             ))
         )
-        .align_x(Alignment::Center)
         .padding([8, 0]);
 
         self.core.applet.popup_container(content).into()
@@ -595,6 +596,8 @@ impl cosmic::Application for AppModel {
                             .set_unit(&self.config_helper, Unit::Bytes)
                             .unwrap();
                     }
+                    self.set_download_speed_display();
+                    self.set_upload_speed_display();
                 }
             }
             Message::UpdateRateChanged(rate) => {
@@ -636,11 +639,18 @@ impl cosmic::Application for AppModel {
                         None,
                         None,
                     );
-                    popup_settings.positioner.size_limits = Limits::NONE
-                        .max_width(372.0)
-                        .min_width(300.0)
-                        .min_height(200.0)
-                        .max_height(1080.0);
+                    let Rectangle {
+                        x,
+                        y,
+                        width,
+                        height,
+                    } = self.rectangle;
+                    popup_settings.positioner.anchor_rect = Rectangle::<i32> {
+                        x: x.max(1.) as i32,
+                        y: y.max(1.) as i32,
+                        width: width.max(1.) as i32,
+                        height: height.max(1.) as i32,
+                    };
                     get_popup(popup_settings)
                 };
             }
