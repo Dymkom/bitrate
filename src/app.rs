@@ -1,5 +1,3 @@
-// TODO: Code cleanup
-// TODO: Check default interface dbus config
 use {
     crate::{
         config::{BitrateAppletConfig, Unit},
@@ -109,7 +107,7 @@ impl AppModel {
             .trim_end_matches('.')
             .to_string();
 
-        // Final truncation to ensure 5 chars total (optional safety)
+        // Final truncation to ensure 5 chars max total
         result.chars().take(5).collect()
     }
 
@@ -171,7 +169,7 @@ impl AppModel {
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
         buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced, None);
 
-        // Get the width of the first layout line
+        // Get the first layout line
         let layout_line = buffer
             .lines
             .first()
@@ -181,22 +179,25 @@ impl AppModel {
             .first()
             .unwrap();
         (
-            layout_line.w.ceil(),
-            (layout_line.max_ascent + layout_line.max_descent).ceil(),
+            layout_line.w.ceil(),                                      // width
+            (layout_line.max_ascent + layout_line.max_descent).ceil(), // height
         )
     }
 
     fn set_download_speed_display(&mut self) {
+        // Closest power of 2
         let download_power = if self.download_speed > 0 {
             self.download_speed.ilog2()
         } else {
             0
         };
+        // Dividing by closest power of 1024
         let download_speed_rebase =
             self.download_speed as f64 / 2u64.pow(download_power - download_power % 10) as f64;
         let download_speed_display = if download_power >= 10 {
             self.format_speed(download_speed_rebase)
         } else {
+            // No decimal places if speed <= 1024 bits or Bytes
             format!("{:.0}", download_speed_rebase)
         };
         let mut download_unit = String::new();
@@ -220,15 +221,18 @@ impl AppModel {
 
     fn set_upload_speed_display(&mut self) {
         let upload_power = if self.upload_speed > 0 {
+            // Closest power of 2
             self.upload_speed.ilog2()
         } else {
             0
         };
+        // Dividing by closest power of 1024
         let upload_speed_rebase =
             self.upload_speed as f64 / 2u64.pow(upload_power - upload_power % 10) as f64;
         let upload_speed_display = if upload_power >= 10 {
             self.format_speed(upload_speed_rebase)
         } else {
+            // No decimal places if speed <= 1024 bits or Bytes
             format!("{:.0}", upload_speed_rebase)
         };
         let mut upload_unit = String::new();
@@ -313,16 +317,12 @@ impl AppModel {
 }
 
 impl cosmic::Application for AppModel {
-    /// The async executor that will be used to run your application's commands.
     type Executor = cosmic::executor::Default;
 
-    /// Data that your application receives to its init method.
     type Flags = ();
 
-    /// Messages which the application and its widgets will emit.
     type Message = Message;
 
-    /// Unique identifier in RDNN (reverse domain name notation) format.
     const APP_ID: &'static str = "io.github.cosmic_utils.cosmic-ext-applet-bitrate";
 
     fn core(&self) -> &cosmic::Core {
@@ -333,7 +333,6 @@ impl cosmic::Application for AppModel {
         &mut self.core
     }
 
-    /// Initializes the application with any given flags and startup commands.
     fn init(
         core: cosmic::Core,
         _flags: Self::Flags,
@@ -343,13 +342,7 @@ impl cosmic::Application for AppModel {
         let config = cosmic_config::Config::new(Self::APP_ID, BitrateAppletConfig::VERSION)
             .map(|context| match BitrateAppletConfig::get_entry(&context) {
                 Ok(config) => config,
-                Err((_errors, config)) => {
-                    // for why in errors {
-                    //     tracing::error!(%why, "error loading app config");
-                    // }
-
-                    config
-                }
+                Err((_errors, config)) => config,
             })
             .unwrap_or_default();
 
@@ -420,11 +413,6 @@ impl cosmic::Application for AppModel {
         Some(Message::PopupClosed(id))
     }
 
-    /// Describes the interface based on the current state of the application model.
-    ///
-    /// The applet's button in the panel will be drawn using the main view method.
-    /// This view should emit messages to toggle the applet's popup window, which will
-    /// be drawn using the `view_window` method.
     fn view(&self) -> Element<'_, Self::Message> {
         let is_horizontal = self.core.applet.is_horizontal();
         let mut limits = Limits::NONE.min_width(1.).min_height(1.);
@@ -484,9 +472,6 @@ impl cosmic::Application for AppModel {
         .into()
     }
 
-    /// The applet's popup window will be drawn using this view method. If there are
-    /// multiple poups, you may match the id parameter to determine which popup to
-    /// create a view for.
     fn view_window(&self, _id: window::Id) -> Element<'_, Self::Message> {
         let Spacing {
             space_xxxs,
@@ -532,12 +517,6 @@ impl cosmic::Application for AppModel {
         self.core.applet.popup_container(content).into()
     }
 
-    /// Register subscriptions for this application.
-    ///
-    /// Subscriptions are long-lived async tasks running in the background which
-    /// emit messages to the application through a channel. They may be conditionally
-    /// activated by selectively appending to the subscription batch, and will
-    /// continue to execute for the duration that they remain in the batch.
     fn subscription(&self) -> Subscription<Self::Message> {
         Subscription::batch(vec![
             rectangle_tracker_subscription(0).map(|e| Message::Rectangle(e.1)),
@@ -550,24 +529,13 @@ impl cosmic::Application for AppModel {
             // Watch for application configuration changes.
             self.core()
                 .watch_config::<BitrateAppletConfig>(Self::APP_ID)
-                .map(|update| {
-                    // for why in update.errors {
-                    //     tracing::error!(?why, "app config error");
-                    // }
-
-                    Message::UpdateConfig(update.config)
-                }),
+                .map(|update| Message::UpdateConfig(update.config)),
             self.core
                 .watch_config("com.system76.CosmicTk")
                 .map(|u| Message::ThemeChanged(u.config)),
         ])
     }
 
-    /// Handles messages emitted by the application and its widgets.
-    ///
-    /// Tasks may be returned for asynchronous execution of code in the background
-    /// on the application's async runtime. The application will not exit until all
-    /// tasks are finished.
     fn update(&mut self, message: Self::Message) -> cosmic::Task<cosmic::Action<Self::Message>> {
         match message {
             Message::UpdateBandwidth => {
