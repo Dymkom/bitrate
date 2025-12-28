@@ -2,16 +2,32 @@
 <component type="desktop-application">
   <id>io.github.cosmic_utils.cosmic-ext-applet-bitrate</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MPL-2.0</project_license>
+  <project_license>GPL-3.0-only</project_license>
+  <project_group>COSMIC</project_group>
+  <developer_name>Aviral Omar</developer_name>
+  <update_contact>aviralomar0301@gmail.com</update_contact>
   <name>Bitrate</name>
   <summary>A Bandwidth Monitor applet for the COSMIC™ desktop.</summary>
-  <icon type="remote" width="64" height="64" scale="1">
-    https://github.com/Aviral-Omar/bitrate.git/raw/main/data/icons/hicolor/scalable/apps/icon.svg
+  <icon type="stock">
+    io.github.cosmic_utils.cosmic-ext-applet-bitrate.svg
   </icon>
-  <url type="vcs-browser">https://github.com/Aviral-Omar/bitrate.git</url>
+  <url type="homepage">https://github.com/Aviral-Omar/bitrate</url>
+  <url type="bugtracker">https://github.com/Aviral-Omar/bitrate/issues</url>
+  <url type="contribute">https://github.com/Aviral-Omar/bitrate</url>
+  <url
+        type="translate"
+    >https://github.com/Aviral-Omar/bitrate/tree/main/i18n</url>
+  <url type="vcs-browser">https://github.com/Aviral-Omar/bitrate</url>
   <launchable
         type="desktop-id"
     >io.github.cosmic_utils.cosmic-ext-applet-bitrate.desktop</launchable>
+    <screenshots>
+      <screenshot type="default">
+        <image />
+        <caption
+            >The applet in the top panel with the view window open.</caption>
+       </screenshot>
+    </screenshots>
   <provides>
     <id>io.github.cosmic_utils.cosmic-ext-applet-bitrate</id>
     <binaries>
