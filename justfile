@@ -180,27 +180,44 @@ rpm:
     mv x86_64/* .
     rmdir x86_64
 
-# Build flatpak locally
-flatpak-builder:
+# Build and install flatpak locally
+flatpak-install:
+    #!/usr/bin/env bash
+    set -e
+    arch="$(flatpak --default-arch)"
+    set -x
     flatpak-builder \
-        --force-clean \
+        --arch="${arch}" \
         --ccache \
-        --user \
+        --force-clean \
         --install \
         --install-deps-from=flathub \
         --repo=repo \
-        flatpak-out \
+        --require-changes \
+        --user \
+        "flatpak-out/${arch}" \
         {{appid}}.json
+
+# Build flatpak locally
+flatpak-build:
+    #!/usr/bin/env bash
+    set -e
+    arch="$(flatpak --default-arch)"
+    set -x
+    flatpak-builder \
+        --arch="${arch}" \
+        --ccache \
+        --force-clean \
+        --install-deps-from=flathub \
+        --repo=repo \
+        --require-changes \
+        --sandbox \
+        --user \
+        --verbose \
+        "flatpak-out/${arch}" \
+        "{{appid}}.json" \
+        2>&1 | tee "log/${arch}.txt"
 
 # Update flatpak cargo-sources.json
 flatpak-cargo-sources:
     python3 ./flatpak/flatpak-cargo-generator.py ./Cargo.lock -o ./flatpak/cargo-sources.json
-
-# Installs files for flatpak
-flatpak-install:
-    install -Dm0755 {{bin-src}} {{flatpak-bin-dst}}
-    install -Dm0644 {{desktop-src}} {{flatpak-desktop-dst}}
-    install -Dm0644 {{metainfo-src}} {{flatpak-metainfo-dst}}
-    for svg in {{icons-src}}/apps/*.svg; do \
-        install -Dm0644 "$svg" "{{flatpak-icons-dst}}/apps/$(basename $svg)"; \
-    done

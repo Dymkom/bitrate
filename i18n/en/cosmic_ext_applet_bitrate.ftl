@@ -1,3 +1,4 @@
+network-interface = Network Interface
 unit = Data Unit
 bits = Bits
 bytes = Bytes

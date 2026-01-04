@@ -1,10 +1,11 @@
 use std::fs;
 
-pub fn get_default_network_interface() -> Option<String> {
-    let paths = fs::read_dir("/sys/class/net").ok()?;
+pub fn get_network_interfaces() -> Vec<String> {
+    let mut interfaces: Vec<String> = Vec::new();
 
+    let paths = fs::read_dir("/sys/class/net").ok().unwrap();
     for entry in paths.flatten() {
-        let iface = entry.file_name().into_string().ok()?;
+        let iface = entry.file_name().into_string().ok().unwrap();
 
         // 1. Skip loopback
         if iface == "lo" {
@@ -22,10 +23,11 @@ pub fn get_default_network_interface() -> Option<String> {
         // 3. Check for carrier (physical connection detected)
         let carrier = fs::read_to_string(path.join("carrier")).unwrap_or_default();
         if carrier.trim() == "1" {
-            return Some(iface);
+            interfaces.push(iface);
         }
     }
-    None
+
+    interfaces
 }
 
 pub fn get_received_bytes(network_interface: &str) -> Option<u64> {

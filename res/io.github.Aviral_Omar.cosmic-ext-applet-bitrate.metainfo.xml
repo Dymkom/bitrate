@@ -37,6 +37,7 @@
        </screenshot>
     </screenshots>
   <provides>
+    <id>com.system76.CosmicApplet</id>
     <binaries>
       <binary>cosmic-ext-applet-bitrate</binary>
     </binaries>

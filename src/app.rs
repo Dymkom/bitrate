@@ -22,7 +22,7 @@ use {
         },
         surface, theme,
         widget::{
-            self, autosize, button, container,
+            self, autosize, button, container, dropdown,
             rectangle_tracker::{
                 RectangleTracker, RectangleUpdate, rectangle_tracker_subscription,
             },
@@ -47,7 +47,9 @@ pub struct AppModel {
     /// Configuration data that persists between application runs
     config: BitrateAppletConfig,
     /// Default network interface
-    default_network_interface: Option<String>,
+    network_interfaces: Vec<String>,
+    /// Selected network interface
+    selected_network_interface: Option<usize>,
     /// Received bytes
     received_bytes: u64,
     /// Sent bytes
@@ -81,7 +83,8 @@ pub enum Message {
     PopupClosed(window::Id),
     UpdateConfig(BitrateAppletConfig),
     UpdateBandwidth,
-    UpdateNetworkInterface,
+    UpdateNetworkInterfaces,
+    UpdateSelectedNetworkInterface(usize),
     UnitChanged(segmented_button::Entity),
     UpdateRateChanged(u8),
     ShowDownloadSpeedChanged(bool),
@@ -92,6 +95,17 @@ pub enum Message {
 }
 
 impl AppModel {
+    fn select_default_network_interface(&mut self) {
+        self.selected_network_interface = None;
+        self.received_bytes = 0;
+        self.sent_bytes = 0;
+        if let Some(interface) = self.network_interfaces.get(0) {
+            self.selected_network_interface = Some(0);
+            self.received_bytes = network::get_received_bytes(interface).unwrap_or(0);
+            self.sent_bytes = network::get_sent_bytes(interface).unwrap_or(0);
+        }
+    }
+
     fn format_speed(&self, val: f64) -> String {
         let formatted = if val >= 1000.0 {
             format!("{:.0}", val)
@@ -360,13 +374,15 @@ impl cosmic::Application for AppModel {
         }
 
         // Set initial received and sent bytes
-        let default_network_interface = network::get_default_network_interface();
+        let network_interfaces = network::get_network_interfaces();
+        let mut selected_network_interface: Option<usize> = None;
         let mut received_bytes = 0;
         let mut sent_bytes = 0;
-        default_network_interface.inspect(|network_interface| {
-            received_bytes = network::get_received_bytes(network_interface).unwrap_or(0);
-            sent_bytes = network::get_sent_bytes(network_interface).unwrap_or(0);
-        });
+        if let Some(interface) = network_interfaces.get(0) {
+            selected_network_interface = Some(0);
+            received_bytes = network::get_received_bytes(interface).unwrap_or(0);
+            sent_bytes = network::get_sent_bytes(interface).unwrap_or(0);
+        }
 
         // Construct the app model with the runtime's core.
         let mut app = AppModel {
@@ -382,7 +398,8 @@ impl cosmic::Application for AppModel {
             upload_speed: 0,
             upload_speed_display: "".to_string(),
             upload_unit: "".to_string(),
-            default_network_interface: network::get_default_network_interface(),
+            network_interfaces: network_interfaces,
+            selected_network_interface,
             unit_model,
             bits_entity,
             bytes_entity,
@@ -480,6 +497,15 @@ impl cosmic::Application for AppModel {
             ..
         } = theme::active().cosmic().spacing;
         let content = column!(
+            padded_control(widget::settings::item(
+                fl!("network-interface"),
+                dropdown(
+                    self.network_interfaces.clone(),
+                    self.selected_network_interface,
+                    Message::UpdateSelectedNetworkInterface
+                )
+            )),
+            padded_control(widget::divider::horizontal::default()).padding([space_xxs, space_s]),
             padded_control(
                 column!(
                     widget::text::body(fl!("unit")),
@@ -525,7 +551,7 @@ impl cosmic::Application for AppModel {
             )))
             .map(|_| Message::UpdateBandwidth),
             (iced::time::every(tokio::time::Duration::from_secs(5)))
-                .map(|_| Message::UpdateNetworkInterface),
+                .map(|_| Message::UpdateNetworkInterfaces),
             // Watch for application configuration changes.
             self.core()
                 .watch_config::<BitrateAppletConfig>(Self::APP_ID)
@@ -539,7 +565,9 @@ impl cosmic::Application for AppModel {
     fn update(&mut self, message: Self::Message) -> cosmic::Task<cosmic::Action<Self::Message>> {
         match message {
             Message::UpdateBandwidth => {
-                if let Some(network_interface) = self.default_network_interface.clone() {
+                if let Some(selected_network_interface) = self.selected_network_interface {
+                    let network_interface =
+                        self.network_interfaces[selected_network_interface].clone();
                     if let Some(received_bytes_cur) =
                         network::get_received_bytes(network_interface.as_ref())
                     {
@@ -562,10 +590,36 @@ impl cosmic::Application for AppModel {
                         self.sent_bytes = sent_bytes_cur;
                         self.set_upload_speed_display();
                     }
+                } else {
+                    self.download_speed = 0;
+                    self.upload_speed = 0;
                 }
             }
-            Message::UpdateNetworkInterface => {
-                self.default_network_interface = network::get_default_network_interface();
+            Message::UpdateNetworkInterfaces => {
+                if let Some(selected_interface) = self.selected_network_interface {
+                    let selected_network_interface = self
+                        .network_interfaces
+                        .get(selected_interface)
+                        .unwrap()
+                        .clone();
+                    self.network_interfaces = network::get_network_interfaces();
+                    if let Some(new_interface) = self.network_interfaces.get(selected_interface) {
+                        if selected_network_interface != *new_interface {
+                            self.select_default_network_interface();
+                        }
+                    } else {
+                        self.select_default_network_interface();
+                    }
+                } else {
+                    self.network_interfaces = network::get_network_interfaces();
+                    self.select_default_network_interface();
+                }
+            }
+            Message::UpdateSelectedNetworkInterface(new_interface) => {
+                self.selected_network_interface = Some(new_interface);
+                let interface = self.network_interfaces.get(0).unwrap();
+                self.received_bytes = network::get_received_bytes(interface).unwrap_or(0);
+                self.sent_bytes = network::get_sent_bytes(interface).unwrap_or(0);
             }
             Message::UnitChanged(entity) => {
                 if !self.unit_model.is_active(entity) {
