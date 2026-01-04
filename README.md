@@ -2,7 +2,7 @@
 
 A Bandwidth Monitor applet for the COSMIC™ desktop.
 
-<img width="547" height="468" alt="image" src="https://github.com/user-attachments/assets/940711a2-b775-4603-a192-dd85480b333b" />
+<img width="549" height="571" alt="image" src="https://github.com/Aviral-Omar/bitrate/blob/main/res/screenshots/view_window_expanded.png?raw=true" />
 
 ## Installation
 
